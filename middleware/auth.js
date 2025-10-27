@@ -15,7 +15,7 @@ module.exports = function(req, res, next) {
 
   // Verify token
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_jwt_secret_key_for_development');
     
     // Fetch full user details from database
     db.get(

@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../../middleware/auth');
 const { getCampaignFromBlockchain, canWithdrawFunds } = require('../../utils/blockchain');
-const { checkWithdrawalEligibility, formatWithdrawalInstructions } = require('../../utils/withdrawalHelper');
 
 // Database connection
 const sqlite3 = require('sqlite3').verbose();
@@ -15,9 +14,9 @@ router.get('/check/:campaignId', auth, async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
     
-    // Get campaign from database
+    // Get campaign from database with creator's wallet address
     db.get(
-      'SELECT * FROM campaigns WHERE id = ? AND creator_id = ?',
+      'SELECT c.*, u.wallet_address FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = ? AND c.creator_id = ?',
       [campaignId, req.user.id],
       async (err, campaign) => {
         if (err) {
@@ -34,8 +33,11 @@ router.get('/check/:campaignId', auth, async (req, res) => {
         }
 
         try {
-          // Check blockchain conditions using helper
-          const result = await checkWithdrawalEligibility(campaign.blockchain_campaign_id);
+          // Get campaign data from blockchain
+          const blockchainCampaign = await getCampaignFromBlockchain(parseInt(campaign.blockchain_campaign_id));
+          
+          // Check withdrawal eligibility using proper blockchain logic
+          const withdrawalEligibility = await canWithdrawFunds(parseInt(campaign.blockchain_campaign_id));
           
           res.json({
             campaign: {
@@ -44,9 +46,10 @@ router.get('/check/:campaignId', auth, async (req, res) => {
               goal: campaign.goal,
               blockchainId: campaign.blockchain_campaign_id
             },
-            blockchain: result.campaign,
-            withdrawal: result.withdrawalStatus,
-            message: result.message
+            blockchain: blockchainCampaign,
+            withdrawal: withdrawalEligibility,
+            wallet_address: campaign.wallet_address,
+            message: withdrawalEligibility.canWithdraw ? 'Campaign eligible for withdrawal' : 'Campaign not eligible for withdrawal'
           });
           
         } catch (blockchainError) {
@@ -94,22 +97,42 @@ router.post('/request/:campaignId', auth, async (req, res) => {
         }
 
         try {
-          // Check if withdrawal is allowed using helper
-          const result = await checkWithdrawalEligibility(campaign.blockchain_campaign_id);
+          // Check withdrawal eligibility using proper blockchain logic
+          const withdrawalEligibility = await canWithdrawFunds(parseInt(campaign.blockchain_campaign_id));
           
-          if (!result.withdrawalStatus.canWithdraw) {
+          if (!withdrawalEligibility.canWithdraw) {
             return res.status(400).json({ 
               message: 'Withdrawal not allowed',
-              details: result.withdrawalStatus
+              details: withdrawalEligibility
             });
           }
 
-          // Return withdrawal instructions using helper
-          const instructions = formatWithdrawalInstructions(campaign, campaign.wallet_address);
+          // Simple withdrawal instructions
+          const instructions = {
+            message: 'Withdrawal instructions',
+            campaign: {
+              id: campaign.id,
+              title: campaign.title,
+              goal: campaign.goal,
+              current_amount: campaign.current_amount,
+              deadline: campaign.deadline
+            },
+            wallet_address: campaign.wallet_address,
+            withdrawal_steps: [
+              'Connect your wallet to the platform',
+              'Navigate to your campaign dashboard',
+              'Click the "Withdraw Funds" button',
+              'Confirm the transaction in your wallet'
+            ]
+          };
+          
+          // Get blockchain campaign data for response
+          const blockchainCampaign = await getCampaignFromBlockchain(parseInt(campaign.blockchain_campaign_id));
           
           res.json({
             ...instructions,
-            blockchain: result.campaign
+            blockchain: blockchainCampaign,
+            withdrawal: withdrawalEligibility
           });
           
         } catch (blockchainError) {

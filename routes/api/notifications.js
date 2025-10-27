@@ -11,7 +11,7 @@ db.run(`CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
   campaign_id INTEGER,
-  type TEXT NOT NULL CHECK(type IN ('campaign_approved', 'campaign_rejected', 'admin_message')),
+  type TEXT NOT NULL CHECK(type IN ('campaign_approved', 'campaign_rejected', 'campaign_deployed', 'admin_message', 'wallet_mismatch')),
   title TEXT NOT NULL,
   message TEXT NOT NULL,
   read_status INTEGER DEFAULT 0,

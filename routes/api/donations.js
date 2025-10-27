@@ -89,6 +89,106 @@ router.post('/', [
   }
 });
 
+// @route   POST api/donations/blockchain
+// @desc    Create a blockchain donation
+// @access  Private
+router.post('/blockchain', [
+  auth,
+  [
+    check('campaignId', 'Campaign ID is required').not().isEmpty(),
+    check('amount', 'Amount is required').isNumeric(),
+    check('transactionHash', 'Transaction hash is required').not().isEmpty(),
+    check('donorAddress', 'Donor address is required').not().isEmpty()
+  ]
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { campaignId, amount, transactionHash, donorAddress, gasUsed } = req.body;
+
+  try {
+    console.log('💰 Processing blockchain donation...');
+    console.log(`- Campaign ID: ${campaignId}`);
+    console.log(`- Amount: ${amount} ETH`);
+    console.log(`- Donor: ${donorAddress}`);
+    console.log(`- Transaction: ${transactionHash}`);
+
+    // Verify campaign exists and is on blockchain
+    db.get(
+      'SELECT * FROM campaigns WHERE id = ? AND blockchain_campaign_id IS NOT NULL AND blockchain_campaign_id != ""',
+      [campaignId],
+      (err, campaign) => {
+        if (err) {
+          console.error('Database error:', err.message);
+          return res.status(500).json({ message: 'Server error while verifying campaign' });
+        }
+
+        if (!campaign) {
+          return res.status(404).json({ message: 'Campaign not found or not deployed on blockchain' });
+        }
+
+        // Insert blockchain donation record
+        db.run(
+          `INSERT INTO donations (campaign_id, donor_id, amount, transaction_hash, donor_address) 
+           VALUES (?, ?, ?, ?, ?)`,
+          [campaignId, req.user.id, amount, transactionHash, donorAddress],
+          function(err) {
+            if (err) {
+              console.error('Database error:', err.message);
+              return res.status(500).json({ message: 'Server error while creating donation record' });
+            }
+
+            // Update campaign current_amount
+            db.run(
+              `UPDATE campaigns SET current_amount = COALESCE(current_amount, 0) + ? WHERE id = ?`,
+              [amount, campaignId],
+              function(updateErr) {
+                if (updateErr) {
+                  console.error('Error updating campaign amount:', updateErr.message);
+                  // Don't fail the request, just log the error
+                }
+
+                console.log('✅ Blockchain donation recorded successfully!');
+
+                // Get the created donation with campaign info
+                db.get(
+                  `SELECT d.*, c.title as campaign_title, u.name as donor_name, c.blockchain_campaign_id
+                   FROM donations d
+                   JOIN campaigns c ON d.campaign_id = c.id
+                   JOIN users u ON d.donor_id = u.id
+                   WHERE d.id = ?`,
+                  [this.lastID],
+                  (err, donation) => {
+                    if (err) {
+                      console.error(err.message);
+                      return res.status(500).json({ message: 'Server error while fetching created donation' });
+                    }
+
+                    res.json({ 
+                      message: 'Blockchain donation recorded successfully!', 
+                      donation,
+                      blockchainDetails: {
+                        campaignId: campaign.blockchain_campaign_id,
+                        transactionHash: transactionHash,
+                        gasUsed: gasUsed
+                      }
+                    });
+                  }
+                );
+              }
+            );
+          }
+        );
+      }
+    );
+  } catch (err) {
+    console.error('Server error:', err.message);
+    res.status(500).json({ message: 'Server error: ' + err.message });
+  }
+});
+
 // @route   GET api/donations/user/:userId
 // @desc    Get donations by user
 // @access  Private

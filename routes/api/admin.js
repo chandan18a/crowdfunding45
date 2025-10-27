@@ -20,30 +20,58 @@ const adminAuth = (req, res, next) => {
 // @access  Private/Admin
 router.get('/stats', [auth, adminAuth], (req, res) => {
   try {
-    // Get campaign statistics
-    db.get(
-      `SELECT 
-        COUNT(*) as totalCampaigns,
-        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pendingCampaigns,
-        COUNT(CASE WHEN status = 'approved' THEN 1 END) as activeCampaigns,
-        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completedCampaigns,
-        SUM(CASE WHEN status = 'approved' THEN current_amount ELSE 0 END) as totalDonations
-       FROM campaigns`,
-      (err, stats) => {
-        if (err) {
-          console.error(err.message);
-          return res.status(500).json({ message: 'Server error' });
-        }
+    // Compute statistics with accurate definitions
+    // activeCampaigns: approved/active, not withdrawn, and deadline in the future (or not set)
+    // totalDonations: sum of current_amount from campaigns (actual raised amounts) for non-withdrawn campaigns
+    const sql = `
+      WITH campaign_base AS (
+        SELECT * FROM campaigns
+      ),
+      active AS (
+        SELECT COUNT(*) AS cnt
+        FROM campaign_base
+        WHERE status IN ('approved','active')
+          AND COALESCE(is_withdrawn, 0) = 0
+          AND (
+            deadline IS NULL OR deadline = '' OR datetime(deadline) > CURRENT_TIMESTAMP
+          )
+      ),
+      pending AS (
+        SELECT COUNT(*) AS cnt FROM campaign_base WHERE status = 'pending'
+      ),
+      completed AS (
+        SELECT COUNT(*) AS cnt FROM campaign_base WHERE status = 'completed'
+      ),
+      totals AS (
+        SELECT COUNT(*) AS cnt FROM campaign_base
+      ),
+      donation_sum AS (
+        SELECT COALESCE(SUM(current_amount), 0) AS total
+        FROM campaign_base
+        WHERE COALESCE(is_withdrawn, 0) = 0
+      )
+      SELECT 
+        (SELECT cnt FROM totals) AS totalCampaigns,
+        (SELECT cnt FROM pending) AS pendingCampaigns,
+        (SELECT cnt FROM active) AS activeCampaigns,
+        (SELECT cnt FROM completed) AS completedCampaigns,
+        (SELECT total FROM donation_sum) AS totalDonations
+    `;
 
-        res.json({
-          totalCampaigns: stats.totalCampaigns || 0,
-          pendingCampaigns: stats.pendingCampaigns || 0,
-          activeCampaigns: stats.activeCampaigns || 0,
-          completedCampaigns: stats.completedCampaigns || 0,
-          totalDonations: stats.totalDonations || 0
-        });
+    db.get(sql, (err, stats) => {
+      if (err) {
+        console.error(err.message);
+        return res.status(500).json({ message: 'Server error' });
       }
-    );
+
+      res.json({
+        totalCampaigns: stats?.totalCampaigns || 0,
+        pendingCampaigns: stats?.pendingCampaigns || 0,
+        activeCampaigns: stats?.activeCampaigns || 0,
+        completedCampaigns: stats?.completedCampaigns || 0,
+        totalDonations: stats?.totalDonations || 0
+      });
+    });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ message: 'Server error' });
@@ -116,7 +144,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
                 campaign.id,
                 'campaign_approved',
                 '✅ Campaign Approved!',
-                `Your campaign "${campaign.title}" has been approved. Please deploy it to the blockchain from your dashboard to go live and start receiving donations.`
+                `Your campaign "${campaign.title}" has been approved by admin. Please connect your MetaMask wallet and deploy it to the blockchain from your dashboard to go live and start receiving donations.`
               );
               console.log('✅ Approval notification sent to fundraiser');
             } catch (notificationError) {
@@ -124,7 +152,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
             }
 
             return res.json({ 
-              message: 'Campaign approved. Fundraiser has been notified to deploy on-chain from their dashboard.'
+              message: 'Campaign approved successfully! Fundraiser has been notified to deploy to blockchain using MetaMask from their dashboard.'
             });
           }
         );
@@ -276,6 +304,16 @@ router.get('/users', [auth, adminAuth], (req, res) => {
     console.error(err.message);
     res.status(500).json({ message: 'Server error' });
   }
+});
+
+// @route   POST api/admin/create-blockchain-campaign
+// @desc    DISABLED - Fundraisers now deploy via MetaMask
+// @access  Private/Admin
+router.post('/create-blockchain-campaign', [auth, adminAuth], async (req, res) => {
+  res.status(410).json({ 
+    message: 'This endpoint is disabled. Fundraisers now deploy campaigns to blockchain using MetaMask from their dashboard.',
+    newWorkflow: 'Admin approves → Fundraiser deploys via MetaMask'
+  });
 });
 
 module.exports = router;

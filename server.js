@@ -74,6 +74,10 @@ db.serialize(() => {
         role TEXT NOT NULL CHECK(role IN ('admin', 'donor', 'fundraiser')),
         wallet_address TEXT,
         name TEXT NOT NULL,
+        phone TEXT,
+        address TEXT,
+        emergency_contact TEXT,
+        emergency_phone TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -132,6 +136,33 @@ db.serialize(() => {
 // Note: Multiple users can now use the same wallet address
 // The wallet_address column no longer has a UNIQUE constraint
 console.log('✅ Users table configured to allow shared wallet addresses');
+
+// Add emergency contact columns to existing users table
+db.run(`ALTER TABLE users ADD COLUMN phone TEXT`, (err) => {
+    if (err && !err.message.includes('duplicate column name')) {
+        console.error('Error adding phone column:', err.message);
+    }
+});
+
+db.run(`ALTER TABLE users ADD COLUMN address TEXT`, (err) => {
+    if (err && !err.message.includes('duplicate column name')) {
+        console.error('Error adding address column:', err.message);
+    }
+});
+
+db.run(`ALTER TABLE users ADD COLUMN emergency_contact TEXT`, (err) => {
+    if (err && !err.message.includes('duplicate column name')) {
+        console.error('Error adding emergency_contact column:', err.message);
+    }
+});
+
+db.run(`ALTER TABLE users ADD COLUMN emergency_phone TEXT`, (err) => {
+    if (err && !err.message.includes('duplicate column name')) {
+        console.error('Error adding emergency_phone column:', err.message);
+    }
+});
+
+console.log('✅ Emergency contact fields added to users table');
 
 // Add blockchain-related columns to campaigns table if they don't exist
 // This is for backward compatibility with existing databases

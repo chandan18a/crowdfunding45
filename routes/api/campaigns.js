@@ -263,7 +263,9 @@ router.get('/my-campaigns', auth, (req, res) => {
        FROM campaigns c 
        JOIN users u ON c.creator_id = u.id 
        WHERE c.creator_id = ? 
-       AND c.title NOT IN ('hp', 'mech', 'test')
+         AND c.title NOT IN ('hp', 'mech', 'test')
+         AND c.title NOT LIKE 'Blockchain Campaign #%'
+         AND c.description NOT LIKE 'Campaign created directly on blockchain%'
        ORDER BY c.created_at DESC`,
       [req.user.id],
       (err, campaigns) => {
@@ -297,6 +299,9 @@ router.get('/active', (req, res) => {
          AND (
            c.deadline IS NULL OR c.deadline = '' OR datetime(c.deadline) > CURRENT_TIMESTAMP
          )
+         AND c.title NOT LIKE 'Blockchain Campaign #%'
+         AND c.description NOT LIKE 'Campaign created directly on blockchain%'
+         AND c.title NOT LIKE 'Properly Integrated Campaign%'
        ORDER BY c.created_at DESC`,
       (err, campaigns) => {
         if (err) {
@@ -323,6 +328,9 @@ router.get('/', (req, res) => {
        FROM campaigns c 
        JOIN users u ON c.creator_id = u.id 
        WHERE c.title NOT IN ('hp', 'mech', 'test')
+         AND c.title NOT LIKE 'Blockchain Campaign #%'
+         AND c.description NOT LIKE 'Campaign created directly on blockchain%'
+         AND c.title NOT LIKE 'Properly Integrated Campaign%'
        ORDER BY c.created_at DESC`,
       (err, campaigns) => {
         if (err) {
@@ -330,7 +338,13 @@ router.get('/', (req, res) => {
           return res.status(500).send('Server error');
         }
 
-        res.json(campaigns);
+        // Additional filtering in case some slip through
+        const filteredCampaigns = campaigns.filter(c => {
+          return !c.title.includes('Blockchain Campaign #') &&
+                 !c.description.includes('Campaign created directly on blockchain');
+        });
+
+        res.json(filteredCampaigns);
       }
     );
   } catch (err) {
@@ -372,7 +386,10 @@ router.get('/optimized', (req, res) => {
        FROM campaigns c 
        JOIN users u ON c.creator_id = u.id 
        WHERE c.status IN ('approved', 'active', 'completed')
-       AND c.title NOT IN ('hp', 'mech', 'test')
+         AND c.title NOT IN ('hp', 'mech', 'test')
+         AND c.title NOT LIKE 'Blockchain Campaign #%'
+         AND c.description NOT LIKE 'Campaign created directly on blockchain%'
+         AND c.title NOT LIKE 'Properly Integrated Campaign%'
        ORDER BY c.created_at DESC`,
       (err, campaigns) => {
         if (err) {

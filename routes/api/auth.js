@@ -4,10 +4,14 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { check, validationResult } = require('express-validator');
 const auth = require('../../middleware/auth');
+const { OAuth2Client } = require('google-auth-library');
 
 // Database connection - Fixed path to correct database file
 const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./crowdfunding.db');
+
+// Initialize Google OAuth Client
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // @route   POST api/auth/register
 // @desc    Register user
@@ -188,8 +192,8 @@ router.post(
           if (!user) {
             console.log('User not found for email:', email);
             return res
-              .status(400)
-              .json({ errors: [{ msg: 'Invalid credentials' }] });
+              .status(404)
+              .json({ msg: 'Email not found. Please check your email address or register for a new account.' });
           }
 
           // Check password
@@ -198,8 +202,8 @@ router.post(
           if (!isMatch) {
             console.log('Password mismatch for email:', email);
             return res
-              .status(400)
-              .json({ errors: [{ msg: 'Invalid credentials' }] });
+              .status(401)
+              .json({ msg: 'Incorrect password. Please try again.' });
           }
 
           // Create JWT payload
@@ -455,5 +459,169 @@ router.put(
     }
   }
 );
+
+// @route   POST api/auth/google
+// @desc    Authenticate user with Google OAuth
+// @access  Public
+router.post('/google', async (req, res) => {
+  const { credential } = req.body;
+
+  if (!credential) {
+    return res.status(400).json({ msg: 'Google credential is required' });
+  }
+
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    console.error('Google Client ID is not configured');
+    return res.status(500).json({ 
+      msg: 'Google OAuth is not configured on the server. Please contact the administrator.',
+      error: 'GOOGLE_CLIENT_ID not set'
+    });
+  }
+
+  try {
+    // Verify the Google ID token
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const { email, name, picture, sub: googleId } = payload;
+
+    if (!email) {
+      return res.status(400).json({ msg: 'Google account must have an email address' });
+    }
+
+    console.log('Google login attempt for email:', email);
+
+    // Check if user already exists
+    db.get(
+      'SELECT * FROM users WHERE email = ?',
+      [email],
+      async (err, user) => {
+        if (err) {
+          console.error('Database error:', err.message);
+          return res.status(500).json({ msg: 'Server error', error: err.message });
+        }
+
+        let userId, userRole, username, walletAddress, userName;
+
+        if (user) {
+          // User exists, use existing data
+          userId = user.id;
+          userRole = user.role;
+          username = user.username;
+          walletAddress = user.wallet_address;
+          userName = user.name || name;
+          console.log('Existing user found, logging in:', email);
+        } else {
+          // User doesn't exist, create new account
+          // Generate username from email or name
+          const baseUsername = name 
+            ? name.toLowerCase().replace(/\s+/g, '') 
+            : email.split('@')[0];
+          let generatedUsername = baseUsername;
+          let usernameExists = true;
+          let attempts = 0;
+
+          // Try to find a unique username
+          while (usernameExists && attempts < 10) {
+            const checkUser = await new Promise((resolve, reject) => {
+              db.get(
+                'SELECT * FROM users WHERE username = ?',
+                [generatedUsername],
+                (err, row) => {
+                  if (err) reject(err);
+                  else resolve(row);
+                }
+              );
+            });
+
+            if (checkUser) {
+              generatedUsername = `${baseUsername}${attempts + 1}`;
+              attempts++;
+            } else {
+              usernameExists = false;
+            }
+          }
+
+          username = generatedUsername;
+          userRole = 'donor'; // Default role for Google sign-in users
+          walletAddress = null;
+          userName = name;
+
+          // Generate a random password (won't be used for Google users)
+          const randomPassword = Math.random().toString(36).slice(-12) + Math.random().toString(36).slice(-12);
+          const salt = await bcrypt.genSalt(10);
+          const hashedPassword = await bcrypt.hash(randomPassword, salt);
+
+          // Create user in database
+          db.run(
+            'INSERT INTO users (username, email, password, role, wallet_address, name) VALUES (?, ?, ?, ?, ?, ?)',
+            [username, email, hashedPassword, userRole, walletAddress, userName],
+            function (insertErr) {
+              if (insertErr) {
+                console.error('Database error creating user:', insertErr.message);
+                return res.status(500).json({ 
+                  error: 'Database error creating user', 
+                  details: insertErr.message 
+                });
+              }
+
+              userId = this.lastID;
+              console.log('New Google user created with ID:', userId);
+
+              // Generate JWT token for new user
+              generateAndSendToken(userId, userRole, username, email, walletAddress, userName);
+            }
+          );
+          return; // Exit early for new user creation
+        }
+
+        // Generate JWT token for existing user
+        generateAndSendToken(userId, userRole, username, email, walletAddress, userName);
+      }
+    );
+
+    function generateAndSendToken(userId, userRole, username, email, walletAddress, userName) {
+      const payload = {
+        user: {
+          id: userId,
+          role: userRole,
+        },
+      };
+
+      jwt.sign(
+        payload,
+        process.env.JWT_SECRET || 'fallback_jwt_secret_key_for_development',
+        { expiresIn: '5 days' },
+        (err, token) => {
+          if (err) {
+            console.error('JWT signing error:', err.message);
+            return res.status(500).json({ 
+              error: 'JWT signing error', 
+              details: err.message 
+            });
+          }
+
+          res.json({
+            token,
+            user: {
+              id: userId,
+              username,
+              email,
+              role: userRole,
+              walletAddress: walletAddress || null,
+              name: userName,
+            },
+          });
+        }
+      );
+    }
+  } catch (error) {
+    console.error('Google authentication error:', error.message);
+    res.status(401).json({ msg: 'Invalid Google token', error: error.message });
+  }
+});
 
 module.exports = router;

@@ -296,6 +296,31 @@ async function syncCampaignStatuses() {
           const deadlineTimestamp = typeof blockchainCampaign.deadline === 'bigint' ? Number(blockchainCampaign.deadline) : Number(blockchainCampaign.deadline);
           
           // Convert values from wei to ETH
+          const goal = web3.utils.fromWei(goalWei, 'ether');
+          const pledged = web3.utils.fromWei(pledgedWei, 'ether');
+          const deadline = new Date(deadlineTimestamp * 1000);
+          
+          // Determine status based on blockchain data
+          const now = Date.now();
+          const deadlinePassed = deadlineTimestamp * 1000 < now;
+          const goalMet = parseFloat(pledged) >= parseFloat(goal);
+          
+          let status = 'active';
+          if (blockchainCampaign.withdrawn) {
+            status = 'completed';
+          } else if (deadlinePassed) {
+            // Campaign ended - check if goal was met
+            if (goalMet) {
+              status = 'completed'; // Goal met, eligible for withdrawal
+            } else {
+              status = 'failed'; // Goal not met, eligible for refunds
+            }
+          }
+          
+          // Update database with blockchain data
+          await new Promise((resolve, reject) => {
+            db.run(
+              `UPDATE campaigns 
                SET blockchain_goal = ?, current_amount = ?, deadline = ?, status = ?, is_withdrawn = ? 
                WHERE id = ?`,
               [goal, pledged, deadline.toISOString(), status, blockchainCampaign.withdrawn ? 1 : 0, campaign.id],

@@ -13,10 +13,12 @@ const db = new sqlite3.Database('./crowdfunding.db');
 router.get('/check/:campaignId', auth, async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
-    
+
     // Get campaign from database with creator's wallet address
+    // CRITICAL FIX: Alias u.wallet_address to avoid overwriting c.wallet_address
+    // We need c.wallet_address because that's the one used for deployment
     db.get(
-      'SELECT c.*, u.wallet_address FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = ? AND c.creator_id = ?',
+      'SELECT c.*, u.wallet_address as user_profile_wallet FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = ? AND c.creator_id = ?',
       [campaignId, req.user.id],
       async (err, campaign) => {
         if (err) {
@@ -35,10 +37,10 @@ router.get('/check/:campaignId', auth, async (req, res) => {
         try {
           // Get campaign data from blockchain
           const blockchainCampaign = await getCampaignFromBlockchain(parseInt(campaign.blockchain_campaign_id));
-          
+
           // Check withdrawal eligibility using proper blockchain logic
           const withdrawalEligibility = await canWithdrawFunds(parseInt(campaign.blockchain_campaign_id));
-          
+
           res.json({
             campaign: {
               id: campaign.id,
@@ -51,12 +53,12 @@ router.get('/check/:campaignId', auth, async (req, res) => {
             wallet_address: campaign.wallet_address,
             message: withdrawalEligibility.canWithdraw ? 'Campaign eligible for withdrawal' : 'Campaign not eligible for withdrawal'
           });
-          
+
         } catch (blockchainError) {
           console.error('Blockchain error:', blockchainError.message);
-          return res.status(500).json({ 
-            message: 'Failed to check blockchain status', 
-            error: blockchainError.message 
+          return res.status(500).json({
+            message: 'Failed to check blockchain status',
+            error: blockchainError.message
           });
         }
       }
@@ -73,7 +75,7 @@ router.get('/check/:campaignId', auth, async (req, res) => {
 router.post('/request/:campaignId', auth, async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
-    
+
     // Get campaign from database
     db.get(
       'SELECT c.*, u.wallet_address FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = ? AND c.creator_id = ?',
@@ -99,9 +101,9 @@ router.post('/request/:campaignId', auth, async (req, res) => {
         try {
           // Check withdrawal eligibility using proper blockchain logic
           const withdrawalEligibility = await canWithdrawFunds(parseInt(campaign.blockchain_campaign_id));
-          
+
           if (!withdrawalEligibility.canWithdraw) {
-            return res.status(400).json({ 
+            return res.status(400).json({
               message: 'Withdrawal not allowed',
               details: withdrawalEligibility
             });
@@ -125,21 +127,21 @@ router.post('/request/:campaignId', auth, async (req, res) => {
               'Confirm the transaction in your wallet'
             ]
           };
-          
+
           // Get blockchain campaign data for response
           const blockchainCampaign = await getCampaignFromBlockchain(parseInt(campaign.blockchain_campaign_id));
-          
+
           res.json({
             ...instructions,
             blockchain: blockchainCampaign,
             withdrawal: withdrawalEligibility
           });
-          
+
         } catch (blockchainError) {
           console.error('Blockchain error:', blockchainError.message);
-          return res.status(500).json({ 
-            message: 'Failed to check blockchain status', 
-            error: blockchainError.message 
+          return res.status(500).json({
+            message: 'Failed to check blockchain status',
+            error: blockchainError.message
           });
         }
       }

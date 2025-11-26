@@ -13,14 +13,14 @@ const db = new sqlite3.Database('./crowdfunding.db');
 
 // Configure multer for file uploads with better error handling
 const storage = multer.diskStorage({
-  destination: function(req, file, cb) {
+  destination: function (req, file, cb) {
     const uploadDir = path.join(__dirname, '../../uploads');
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
     cb(null, uploadDir);
   },
-  filename: function(req, file, cb) {
+  filename: function (req, file, cb) {
     cb(null, `${Date.now()}-${file.originalname}`);
   }
 });
@@ -31,7 +31,7 @@ const fileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: fileFilter
@@ -78,7 +78,7 @@ router.post('/', [
     // Fix the file handling - safely check for file existence
     let imageUrl = null;
     let documentUrl = null;
-    
+
     if (req.files) {
       if (req.files.image && req.files.image.length > 0) {
         imageUrl = `/uploads/${req.files.image[0].filename}`;
@@ -105,7 +105,7 @@ router.post('/', [
     // Calculate duration in seconds to validate it
     const diffMs = deadlineDate.getTime() - currentDate.getTime();
     const durationInSeconds = Math.floor(diffMs / 1000);
-    
+
     // Ensure minimum duration of 1 day (86400 seconds)
     if (durationInSeconds < 86400) {
       return res.status(400).json({ message: 'Campaign duration must be at least 1 day' });
@@ -129,7 +129,7 @@ router.post('/', [
       `INSERT INTO campaigns (title, description, goal, deadline, creator_id, wallet_address, image_url, document_url, status, category, blockchain_campaign_id, transaction_hash) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [title, description, goal, deadline, req.user.id, walletAddress, imageUrl, documentUrl, status, category || 'general', blockchainCampaignId, transactionHash],
-      function(err) {
+      function (err) {
         if (err) {
           console.error('Database error:', err.message);
           return res.status(500).json({ message: 'Server error while creating campaign: ' + err.message });
@@ -150,7 +150,7 @@ router.post('/', [
 
             const message = 'Campaign created successfully! Your campaign is now pending admin approval. You will be notified once it\'s approved and ready for blockchain deployment.';
 
-            res.json({ 
+            res.json({
               message,
               campaign,
               blockchainDetails: {
@@ -206,7 +206,7 @@ router.post('/json', [
     // Calculate duration in seconds to validate it
     const diffMs = deadlineDate.getTime() - currentDate.getTime();
     const durationInSeconds = Math.floor(diffMs / 1000);
-    
+
     // Ensure minimum duration of 1 day (86400 seconds)
     if (durationInSeconds < 86400) {
       return res.status(400).json({ message: 'Campaign duration must be at least 1 day' });
@@ -219,7 +219,7 @@ router.post('/json', [
       `INSERT INTO campaigns (title, description, goal, deadline, creator_id, wallet_address, status, category, blockchain_campaign_id, transaction_hash) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [title, description, goal, deadline, req.user.id, walletAddress, status, category || 'general', blockchainCampaignId || '', transactionHash || ''],
-      function(err) {
+      function (err) {
         if (err) {
           console.error('Database error:', err.message);
           return res.status(500).json({ message: 'Server error while creating campaign: ' + err.message });
@@ -238,9 +238,9 @@ router.post('/json', [
               return res.status(500).json({ message: 'Server error while fetching created campaign: ' + err.message });
             }
 
-            res.json({ 
-              message: blockchainCampaignId ? 'Campaign created and deployed to blockchain successfully!' : 'Campaign created successfully and submitted for admin approval', 
-              campaign 
+            res.json({
+              message: blockchainCampaignId ? 'Campaign created and deployed to blockchain successfully!' : 'Campaign created successfully and submitted for admin approval',
+              campaign
             });
           }
         );
@@ -259,7 +259,11 @@ router.get('/my-campaigns', auth, (req, res) => {
   try {
     console.log('🔍 Fetching campaigns for user ID:', req.user.id);
     db.all(
-      `SELECT c.*, u.name as creator_name 
+      `SELECT c.*, u.name as creator_name,
+       (SELECT COUNT(*) FROM fund_usage_plans WHERE campaign_id = c.id) > 0 as has_usage_plan,
+       COALESCE((SELECT approval_status FROM fund_usage_plans WHERE campaign_id = c.id AND withdrawal_status = 'pending' ORDER BY created_at DESC LIMIT 1), 'none') as plan_approval_status,
+       (SELECT COUNT(*) FROM fund_usage_plans WHERE campaign_id = c.id AND approval_status = 'approved' AND withdrawal_status = 'pending') as approved_pending_count,
+       COALESCE((SELECT SUM(amount) FROM fund_usage_plans WHERE campaign_id = c.id AND withdrawal_status = 'withdrawn'), 0) as total_withdrawn
        FROM campaigns c 
        JOIN users u ON c.creator_id = u.id 
        WHERE c.creator_id = ? 
@@ -271,7 +275,7 @@ router.get('/my-campaigns', auth, (req, res) => {
       (err, campaigns) => {
         if (err) {
           console.error('❌ Database error:', err.message);
-          return res.status(500).json({ message: 'Server error' });
+          return res.status(500).json({ message: 'Server error', error: err.message });
         }
 
         console.log('✅ Found campaigns:', campaigns ? campaigns.length : 0);
@@ -296,6 +300,9 @@ router.get('/active', (req, res) => {
        JOIN users u ON c.creator_id = u.id 
        WHERE c.status IN ('approved', 'active')
          AND COALESCE(c.is_withdrawn, 0) = 0
+         AND c.blockchain_campaign_id IS NOT NULL
+         AND c.blockchain_campaign_id != ''
+         AND c.blockchain_campaign_id != '0'
          AND (
            c.deadline IS NULL OR c.deadline = '' OR datetime(c.deadline) > CURRENT_TIMESTAMP
          )
@@ -323,30 +330,47 @@ router.get('/active', (req, res) => {
 // @access  Public
 router.get('/', (req, res) => {
   try {
-    db.all(
-      `SELECT c.*, u.username as creator_name 
-       FROM campaigns c 
-       JOIN users u ON c.creator_id = u.id 
-       WHERE c.title NOT IN ('hp', 'mech', 'test')
-         AND c.title NOT LIKE 'Blockchain Campaign #%'
-         AND c.description NOT LIKE 'Campaign created directly on blockchain%'
-         AND c.title NOT LIKE 'Properly Integrated Campaign%'
-       ORDER BY c.created_at DESC`,
-      (err, campaigns) => {
-        if (err) {
-          console.error(err.message);
-          return res.status(500).send('Server error');
-        }
+    const { status, includeAll } = req.query || {};
+    const params = [];
+    const blockchainFilter = `
+      c.blockchain_campaign_id IS NOT NULL
+      AND c.blockchain_campaign_id != ''
+      AND c.blockchain_campaign_id != '0'
+    `;
 
-        // Additional filtering in case some slip through
-        const filteredCampaigns = campaigns.filter(c => {
-          return !c.title.includes('Blockchain Campaign #') &&
-                 !c.description.includes('Campaign created directly on blockchain');
-        });
+    let query = `
+      SELECT c.*, u.username as creator_name 
+      FROM campaigns c 
+      JOIN users u ON c.creator_id = u.id 
+      WHERE c.title NOT IN ('hp', 'mech', 'test')
+        AND c.title NOT LIKE 'Blockchain Campaign #%'
+        AND c.description NOT LIKE 'Campaign created directly on blockchain%'
+        AND c.title NOT LIKE 'Properly Integrated Campaign%'
+    `;
 
-        res.json(filteredCampaigns);
+    if (status) {
+      query += ' AND c.status = ?';
+      params.push(status);
+    } else if (includeAll !== 'true') {
+      query += ` AND ${blockchainFilter}
+                 AND c.status IN ('approved', 'active', 'completed', 'failed')`;
+    }
+
+    query += ' ORDER BY c.created_at DESC';
+
+    db.all(query, params, (err, campaigns) => {
+      if (err) {
+        console.error(err.message);
+        return res.status(500).send('Server error');
       }
-    );
+
+      const filteredCampaigns = campaigns.filter(c => {
+        return !c.title.includes('Blockchain Campaign #') &&
+          !c.description.includes('Campaign created directly on blockchain');
+      });
+
+      res.json(filteredCampaigns);
+    });
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server error');
@@ -358,14 +382,14 @@ router.get('/', (req, res) => {
 // @access  Public
 router.get('/health', (req, res) => {
   try {
-    res.json({ 
-      status: 'ok', 
+    res.json({
+      status: 'ok',
       message: 'Campaigns API is working',
       timestamp: new Date().toISOString()
     });
   } catch (err) {
-    res.status(500).json({ 
-      status: 'error', 
+    res.status(500).json({
+      status: 'error',
       message: 'Campaigns API health check failed',
       error: err.message
     });
@@ -386,6 +410,9 @@ router.get('/optimized', (req, res) => {
        FROM campaigns c 
        JOIN users u ON c.creator_id = u.id 
        WHERE c.status IN ('approved', 'active', 'completed')
+         AND c.blockchain_campaign_id IS NOT NULL
+         AND c.blockchain_campaign_id != ''
+         AND c.blockchain_campaign_id != '0'
          AND c.title NOT IN ('hp', 'mech', 'test')
          AND c.title NOT LIKE 'Blockchain Campaign #%'
          AND c.description NOT LIKE 'Campaign created directly on blockchain%'
@@ -395,8 +422,8 @@ router.get('/optimized', (req, res) => {
         if (err) {
           console.error('Database error in /optimized:', err.message);
           console.error('Full error:', err);
-          return res.status(500).json({ 
-            message: 'Database error', 
+          return res.status(500).json({
+            message: 'Database error',
             error: err.message,
             details: 'Failed to fetch campaigns from database'
           });
@@ -409,8 +436,8 @@ router.get('/optimized', (req, res) => {
   } catch (err) {
     console.error('Unexpected error in /optimized:', err.message);
     console.error('Full error:', err);
-    res.status(500).json({ 
-      message: 'Server error', 
+    res.status(500).json({
+      message: 'Server error',
       error: err.message,
       details: 'Unexpected server error occurred'
     });
@@ -450,7 +477,7 @@ router.get('/:id', (req, res) => {
 // @route   PUT api/campaigns/:id
 // @desc    Update campaign
 // @access  Private
-router.put('/:id', 
+router.put('/:id',
   auth,
   (req, res, next) => {
     // Handle single file upload for image updates
@@ -509,7 +536,7 @@ router.put('/:id',
              SET title = ?, description = ?, goal = ?, deadline = ?, image_url = ? 
              WHERE id = ?`,
             [title, description, goal, deadline, image, req.params.id],
-            function(err) {
+            function (err) {
               if (err) {
                 console.error(err.message);
                 return res.status(500).send('Server error');
@@ -566,7 +593,7 @@ router.put('/:id/status', [
     db.run(
       'UPDATE campaigns SET status = ? WHERE id = ?',
       [status, req.params.id],
-      function(err) {
+      function (err) {
         if (err) {
           console.error(err.message);
           return res.status(500).send('Server error');
@@ -617,12 +644,12 @@ router.put('/:id/withdraw', auth, async (req, res) => {
         try {
           // Import blockchain utilities
           const { getCampaignFromBlockchain, canWithdrawFunds } = require('../../utils/blockchain');
-          
+
           // Check if withdrawal is allowed on blockchain
           const withdrawalStatus = await canWithdrawFunds(campaign.blockchain_campaign_id);
-          
+
           if (!withdrawalStatus.canWithdraw) {
-            return res.status(400).json({ 
+            return res.status(400).json({
               msg: 'Withdrawal conditions not met',
               details: withdrawalStatus
             });
@@ -642,13 +669,13 @@ router.put('/:id/withdraw', auth, async (req, res) => {
           db.run(
             'UPDATE campaigns SET is_withdrawn = 1, status = "completed", current_amount = ? WHERE id = ?',
             [actualWithdrawalAmount, req.params.id],
-            function(err) {
+            function (err) {
               if (err) {
                 console.error(err.message);
                 return res.status(500).send('Server error');
               }
 
-              res.json({ 
+              res.json({
                 msg: 'Campaign marked as withdrawn successfully!',
                 withdrawalAmount: actualWithdrawalAmount,
                 blockchainStatus: withdrawalStatus
@@ -657,9 +684,9 @@ router.put('/:id/withdraw', auth, async (req, res) => {
           );
         } catch (blockchainError) {
           console.error('Blockchain error:', blockchainError.message);
-          return res.status(500).json({ 
+          return res.status(500).json({
             msg: 'Failed to verify blockchain withdrawal conditions',
-            error: blockchainError.message 
+            error: blockchainError.message
           });
         }
       }
@@ -703,11 +730,11 @@ router.get('/user/:userId', (req, res) => {
 router.put('/:id/confirm-deployment', auth, async (req, res) => {
   try {
     const { blockchainCampaignId, transactionHash, gasUsed } = req.body;
-    
+
     // Verify the campaign exists and user is authorized (admin can update any campaign)
     const whereClause = req.user.role === 'admin' ? 'WHERE id = ?' : 'WHERE id = ? AND creator_id = ?';
     const params = req.user.role === 'admin' ? [req.params.id] : [req.params.id, req.user.id];
-    
+
     db.get(
       `SELECT * FROM campaigns ${whereClause}`,
       params,
@@ -716,7 +743,7 @@ router.put('/:id/confirm-deployment', auth, async (req, res) => {
           console.error(err.message);
           return res.status(500).json({ message: 'Server error' });
         }
-        
+
         if (!campaign) {
           return res.status(404).json({ message: 'Campaign not found or not authorized for deployment confirmation' });
         }
@@ -747,46 +774,46 @@ router.put('/:id/confirm-deployment', auth, async (req, res) => {
             console.warn('Could not decode CampaignCreated from transaction:', decodeErr.message);
           }
         }
-        
+
         // Validate that we have a blockchain campaign ID
         if (!resolvedBlockchainId || resolvedBlockchainId === '0' || resolvedBlockchainId === '') {
-          return res.status(400).json({ 
+          return res.status(400).json({
             message: 'Blockchain campaign ID is required for deployment confirmation',
             details: 'The campaign ID was not properly extracted from the blockchain transaction. Please check the transaction on Etherscan and try again.'
           });
         }
-        
+
         // Update campaign with blockchain details and mark as active
         console.log('🔄 Updating campaign in database with blockchain details...');
         console.log(`- Campaign ID: ${req.params.id}`);
         console.log(`- Blockchain ID: ${resolvedBlockchainId}`);
         console.log(`- Transaction Hash: ${transactionHash || campaign.transaction_hash || ''}`);
-        
+
         db.run(
           'UPDATE campaigns SET status = "active", blockchain_campaign_id = ?, transaction_hash = ?, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?',
           [resolvedBlockchainId, transactionHash || campaign.transaction_hash || '', req.params.id],
-          function(err) {
+          function (err) {
             if (err) {
               console.error('❌ Database update error:', err.message);
               console.error('❌ Error details:', err);
-              return res.status(500).json({ 
+              return res.status(500).json({
                 message: 'Database error while updating campaign',
                 error: err.message,
                 details: 'Failed to update campaign with blockchain details'
               });
             }
-            
+
             console.log(`✅ Database updated successfully. Changes: ${this.changes}`);
-            
+
             if (this.changes === 0) {
               console.error('❌ No rows updated - campaign not found');
               return res.status(404).json({ message: 'Campaign not found or already updated' });
             }
-            
+
             console.log(`✅ Campaign "${campaign.title}" confirmed and deployed by fundraiser`);
             console.log(`- Blockchain ID: ${resolvedBlockchainId}`);
             console.log(`- Transaction: ${transactionHash}`);
-            
+
             // Create notification for successful deployment
             (async () => {
               try {
@@ -803,8 +830,8 @@ router.put('/:id/confirm-deployment', auth, async (req, res) => {
                 console.error('⚠️ Failed to send deployment notification:', notificationError.message);
               }
             })();
-            
-            res.json({ 
+
+            res.json({
               message: 'Campaign deployment confirmed successfully! Your campaign is now live on the blockchain.',
               success: true,
               campaign: {
@@ -835,7 +862,7 @@ router.put('/:id/confirm-deployment', auth, async (req, res) => {
 router.post('/:id/updateBlockchainId', auth, (req, res) => {
   try {
     const { blockchainId, txHash } = req.body;
-    
+
     // Verify the campaign belongs to the user
     db.get(
       'SELECT * FROM campaigns WHERE id = ? AND creator_id = ?',
@@ -845,29 +872,29 @@ router.post('/:id/updateBlockchainId', auth, (req, res) => {
           console.error(err.message);
           return res.status(500).json({ message: 'Server error' });
         }
-        
+
         if (!campaign) {
           return res.status(404).json({ message: 'Campaign not found or not authorized' });
         }
-        
+
         // Update campaign with blockchain details
         db.run(
           'UPDATE campaigns SET blockchain_campaign_id = ?, transaction_hash = ? WHERE id = ?',
           [blockchainId, txHash, req.params.id],
-          function(err) {
+          function (err) {
             if (err) {
               console.error(err.message);
               return res.status(500).json({ message: 'Server error' });
             }
-            
+
             if (this.changes === 0) {
               return res.status(404).json({ message: 'Campaign not found' });
             }
-            
+
             console.log(`✅ Campaign "${campaign.title}" updated with blockchain ID: ${blockchainId}`);
             console.log(`- Transaction: ${txHash}`);
-            
-            res.json({ 
+
+            res.json({
               message: 'Campaign updated with blockchain details successfully!',
               blockchainDetails: {
                 campaignId: blockchainId,
@@ -898,11 +925,11 @@ router.delete('/:id/delete', auth, (req, res) => {
           console.error(err.message);
           return res.status(500).json({ message: 'Server error' });
         }
-        
+
         if (!campaign) {
           return res.status(404).json({ message: 'Campaign not found or you are not authorized to delete it' });
         }
-        
+
         // Check if campaign has donations
         db.get(
           'SELECT COUNT(*) as donationCount FROM donations WHERE campaign_id = ?',
@@ -912,18 +939,18 @@ router.delete('/:id/delete', auth, (req, res) => {
               console.error(err.message);
               return res.status(500).json({ message: 'Server error' });
             }
-            
+
             if (result.donationCount > 0) {
-              return res.status(400).json({ 
-                message: 'Cannot delete campaign with existing donations. Please contact admin for assistance.' 
+              return res.status(400).json({
+                message: 'Cannot delete campaign with existing donations. Please contact admin for assistance.'
               });
             }
-            
+
             // Delete campaign
             db.run(
               'DELETE FROM campaigns WHERE id = ? AND creator_id = ?',
               [req.params.id, req.user.id],
-              function(err) {
+              function (err) {
                 if (err) {
                   console.error(err.message);
                   return res.status(500).json({ message: 'Server error' });
@@ -952,49 +979,49 @@ router.post('/:id/donate', async (req, res) => {
   try {
     const { id } = req.params;
     const { amount, donor_address } = req.body;
-    
+
     console.log('💰 Donation request:', { campaignId: id, amount, donor_address });
-    
+
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: 'Invalid donation amount' });
     }
-    
+
     // Get campaign details
     db.get('SELECT * FROM campaigns WHERE id = ?', [id], (err, campaign) => {
       if (err) {
         console.error('Database error:', err);
         return res.status(500).json({ message: 'Database error' });
       }
-      
+
       if (!campaign) {
         return res.status(404).json({ message: 'Campaign not found' });
       }
-      
+
       // Update campaign with new donation
       const newAmount = (campaign.current_amount || 0) + parseFloat(amount);
-      
+
       db.run(
         'UPDATE campaigns SET current_amount = ? WHERE id = ?',
         [newAmount, id],
-        function(err) {
+        function (err) {
           if (err) {
             console.error('Update error:', err);
             return res.status(500).json({ message: 'Failed to update campaign' });
           }
-          
+
           // Insert donation record
           db.run(
             'INSERT INTO donations (campaign_id, donor_address, amount, created_at) VALUES (?, ?, ?, datetime("now"))',
             [id, donor_address || 'anonymous', amount],
-            function(err) {
+            function (err) {
               if (err) {
                 console.error('Donation record error:', err);
                 return res.status(500).json({ message: 'Failed to record donation' });
               }
-              
+
               console.log('✅ Donation successful:', { campaignId: id, amount, newTotal: newAmount });
-              res.json({ 
-                message: 'Donation successful', 
+              res.json({
+                message: 'Donation successful',
                 amount: amount,
                 newTotal: newAmount,
                 campaignId: id
@@ -1004,7 +1031,7 @@ router.post('/:id/donate', async (req, res) => {
         }
       );
     });
-    
+
   } catch (err) {
     console.error('Donation error:', err);
     res.status(500).json({ message: 'Server error' });
@@ -1016,45 +1043,45 @@ router.post('/:id/withdraw', async (req, res) => {
   try {
     const { id } = req.params;
     const { withdrawer_address } = req.body;
-    
+
     console.log('💸 Withdrawal request:', { campaignId: id, withdrawer_address });
-    
+
     // Get campaign details
     db.get('SELECT * FROM campaigns WHERE id = ?', [id], (err, campaign) => {
       if (err) {
         console.error('Database error:', err);
         return res.status(500).json({ message: 'Database error' });
       }
-      
+
       if (!campaign) {
         return res.status(404).json({ message: 'Campaign not found' });
       }
-      
+
       // Check if campaign goal is met
       if (campaign.current_amount < campaign.goal) {
         return res.status(400).json({ message: 'Campaign goal not met yet' });
       }
-      
+
       // Mark campaign as withdrawn
       db.run(
         'UPDATE campaigns SET is_withdrawn = 1 WHERE id = ?',
         [id],
-        function(err) {
+        function (err) {
           if (err) {
             console.error('Withdrawal error:', err);
             return res.status(500).json({ message: 'Failed to process withdrawal' });
           }
-          
+
           console.log('✅ Withdrawal successful:', { campaignId: id, amount: campaign.current_amount });
-          res.json({ 
-            message: 'Withdrawal successful', 
+          res.json({
+            message: 'Withdrawal successful',
             amount: campaign.current_amount,
             campaignId: id
           });
         }
       );
     });
-    
+
   } catch (err) {
     console.error('Withdrawal error:', err);
     res.status(500).json({ message: 'Server error' });

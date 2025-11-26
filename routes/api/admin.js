@@ -48,7 +48,7 @@ router.get('/stats', [auth, adminAuth], (req, res) => {
       donation_sum AS (
         SELECT COALESCE(SUM(current_amount), 0) AS total
         FROM campaign_base
-        WHERE COALESCE(is_withdrawn, 0) = 0
+        -- Removed is_withdrawn check to show TOTAL historical raised amount
       )
       SELECT 
         (SELECT cnt FROM totals) AS totalCampaigns,
@@ -86,7 +86,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
   console.log('- Campaign ID:', req.params.id);
   console.log('- Admin User ID:', req.user.id);
   console.log('- Test Mode:', process.env.TEST_MODE);
-  
+
   try {
     // First, get campaign details
     console.log('🚨 DEBUG: Fetching campaign from database...');
@@ -95,7 +95,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
       [req.params.id],
       async (err, campaign) => {
         console.log('🚨 DEBUG: Database query result:', { err: err?.message, campaign: campaign ? 'found' : 'not found' });
-        
+
         if (err) {
           console.error('Database error:', err.message);
           return res.status(500).json({ message: 'Server error' });
@@ -105,7 +105,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
           console.log('🚨 DEBUG: Campaign not found in database');
           return res.status(404).json({ message: 'Campaign not found' });
         }
-        
+
         console.log('🚨 DEBUG: Campaign details:', {
           id: campaign.id,
           title: campaign.title,
@@ -127,7 +127,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
         db.run(
           'UPDATE campaigns SET status = ?, approved_by = ? WHERE id = ? AND status = "pending"',
           ['approved', req.user.id, req.params.id],
-          async function(err) {
+          async function (err) {
             if (err) {
               console.error('Database update error:', err.message);
               return res.status(500).json({ message: 'Failed to update campaign status' });
@@ -151,7 +151,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
               console.error('⚠️ Failed to send notification:', notificationError.message);
             }
 
-            return res.json({ 
+            return res.json({
               message: 'Campaign approved successfully! Fundraiser has been notified to deploy to blockchain using MetaMask from their dashboard.'
             });
           }
@@ -170,7 +170,7 @@ router.put('/campaigns/:id/approve', [auth, adminAuth], async (req, res) => {
 router.put('/campaigns/:id/reject', [auth, adminAuth], async (req, res) => {
   try {
     const { reason } = req.body;
-    
+
     // Get campaign details first
     db.get(
       'SELECT c.*, u.name as creator_name FROM campaigns c JOIN users u ON c.creator_id = u.id WHERE c.id = ?',
@@ -180,15 +180,15 @@ router.put('/campaigns/:id/reject', [auth, adminAuth], async (req, res) => {
           console.error(err.message);
           return res.status(500).json({ message: 'Server error' });
         }
-        
+
         if (!campaign) {
           return res.status(404).json({ message: 'Campaign not found' });
         }
-        
+
         db.run(
           'UPDATE campaigns SET status = ?, approved_by = ? WHERE id = ?',
           ['rejected', req.user.id, req.params.id],
-          async function(err) {
+          async function (err) {
             if (err) {
               console.error(err.message);
               return res.status(500).json({ message: 'Server error' });
@@ -200,10 +200,10 @@ router.put('/campaigns/:id/reject', [auth, adminAuth], async (req, res) => {
 
             // Send rejection notification to fundraiser
             try {
-              const rejectionMessage = reason 
+              const rejectionMessage = reason
                 ? `Unfortunately, your campaign "${campaign.title}" has been rejected by the admin. Reason: ${reason}. You can edit and resubmit your campaign after addressing the concerns.`
                 : `Unfortunately, your campaign "${campaign.title}" has been rejected by the admin. Please review the campaign guidelines and resubmit after making necessary changes.`;
-              
+
               await createNotification(
                 campaign.creator_id,
                 campaign.id,
@@ -235,7 +235,7 @@ router.delete('/campaigns/:id/delete', [auth, adminAuth], async (req, res) => {
     db.run(
       'DELETE FROM campaigns WHERE id = ?',
       [req.params.id],
-      function(err) {
+      function (err) {
         if (err) {
           console.error(err.message);
           return res.status(500).json({ message: 'Server error' });
@@ -262,14 +262,14 @@ router.get('/campaigns', [auth, adminAuth], (req, res) => {
     const { status } = req.query;
     let sql = 'SELECT c.*, u.name as creator_name FROM campaigns c JOIN users u ON c.creator_id = u.id';
     const params = [];
-    
+
     if (status) {
       sql += ' WHERE c.status = ?';
       params.push(status);
     }
-    
+
     sql += ' ORDER BY c.created_at DESC';
-    
+
     db.all(sql, params, (err, campaigns) => {
       if (err) {
         console.error(err.message);
@@ -310,7 +310,7 @@ router.get('/users', [auth, adminAuth], (req, res) => {
 // @desc    DISABLED - Fundraisers now deploy via MetaMask
 // @access  Private/Admin
 router.post('/create-blockchain-campaign', [auth, adminAuth], async (req, res) => {
-  res.status(410).json({ 
+  res.status(410).json({
     message: 'This endpoint is disabled. Fundraisers now deploy campaigns to blockchain using MetaMask from their dashboard.',
     newWorkflow: 'Admin approves → Fundraiser deploys via MetaMask'
   });

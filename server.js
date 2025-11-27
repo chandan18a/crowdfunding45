@@ -202,6 +202,18 @@ db.serialize(() => {
         FOREIGN KEY (created_by) REFERENCES users (id)
     )`);
 
+  db.run(`CREATE TABLE IF NOT EXISTS withdrawal_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        request_id INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        usage_details TEXT NOT NULL,
+        transaction_hash TEXT,
+        executed INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (campaign_id) REFERENCES campaigns (id)
+    )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS usage_votes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usage_request_id INTEGER NOT NULL,
@@ -329,6 +341,11 @@ db.run(`ALTER TABLE campaigns ADD COLUMN blockchain_goal REAL`, (err) => {
   // Silently ignore if column already exists
 });
 
+// Add document_url column to withdrawal_requests table for bill uploads
+db.run(`ALTER TABLE withdrawal_requests ADD COLUMN document_url TEXT`, (err) => {
+  // Silently ignore if column already exists
+});
+
 // File upload configuration
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -450,6 +467,10 @@ app.use('/api/withdrawal', require('./routes/api/withdrawal'));
 // Notification routes
 const { router: notificationRoutes } = require('./routes/api/notifications');
 app.use('/api/notifications', notificationRoutes);
+
+// Withdrawal request routes
+const withdrawalRequestRoutes = require('./routes/api/withdrawalRequests');
+app.use('/api/withdrawal-requests', withdrawalRequestRoutes);
 
 // Test mode check endpoint
 app.get('/api/test-mode', (req, res) => {

@@ -106,9 +106,9 @@ router.post('/', [
     const diffMs = deadlineDate.getTime() - currentDate.getTime();
     const durationInSeconds = Math.floor(diffMs / 1000);
 
-    // Ensure minimum duration of 1 day (86400 seconds)
-    if (durationInSeconds < 86400) {
-      return res.status(400).json({ message: 'Campaign duration must be at least 1 day' });
+    // Ensure minimum duration of 5 minutes (300 seconds) for testing
+    if (durationInSeconds < 300) {
+      return res.status(400).json({ message: 'Campaign duration must be at least 5 minutes' });
     }
 
     console.log('🚀 Creating campaign (pending admin approval)...');
@@ -263,7 +263,10 @@ router.get('/my-campaigns', auth, (req, res) => {
        (SELECT COUNT(*) FROM fund_usage_plans WHERE campaign_id = c.id) > 0 as has_usage_plan,
        COALESCE((SELECT approval_status FROM fund_usage_plans WHERE campaign_id = c.id AND withdrawal_status = 'pending' ORDER BY created_at DESC LIMIT 1), 'none') as plan_approval_status,
        (SELECT COUNT(*) FROM fund_usage_plans WHERE campaign_id = c.id AND approval_status = 'approved' AND withdrawal_status = 'pending') as approved_pending_count,
-       COALESCE((SELECT SUM(amount) FROM fund_usage_plans WHERE campaign_id = c.id AND withdrawal_status = 'withdrawn'), 0) as total_withdrawn
+        (
+          COALESCE((SELECT SUM(CAST(amount AS REAL)) FROM withdrawal_requests WHERE campaign_id = c.id), 0) +
+          COALESCE((SELECT SUM(CAST(amount AS REAL)) FROM fund_usage_plans WHERE campaign_id = c.id AND withdrawal_status IN ('pending', 'withdrawn')), 0)
+        ) as total_withdrawn
        FROM campaigns c 
        JOIN users u ON c.creator_id = u.id 
        WHERE c.creator_id = ? 
@@ -279,6 +282,14 @@ router.get('/my-campaigns', auth, (req, res) => {
         }
 
         console.log('✅ Found campaigns:', campaigns ? campaigns.length : 0);
+
+        // Debug: Log total_withdrawn for each campaign
+        campaigns.forEach(c => {
+          if (c.total_withdrawn > 0) {
+            console.log(`💰 Campaign "${c.title}": current_amount=${c.current_amount}, total_withdrawn=${c.total_withdrawn}`);
+          }
+        });
+
         console.log('📊 Campaigns data:', campaigns);
         res.json(campaigns);
       }
@@ -295,7 +306,11 @@ router.get('/my-campaigns', auth, (req, res) => {
 router.get('/active', (req, res) => {
   try {
     db.all(
-      `SELECT c.*, u.name as creator_name 
+      `SELECT c.*, u.name as creator_name,
+       (
+         COALESCE((SELECT SUM(amount) FROM withdrawal_requests WHERE campaign_id = c.id AND executed = 1), 0) +
+         COALESCE((SELECT SUM(amount) FROM fund_usage_plans WHERE campaign_id = c.id AND withdrawal_status = 'withdrawn'), 0)
+       ) as total_withdrawn
        FROM campaigns c 
        JOIN users u ON c.creator_id = u.id 
        WHERE c.status IN ('approved', 'active')
@@ -339,7 +354,11 @@ router.get('/', (req, res) => {
     `;
 
     let query = `
-      SELECT c.*, u.username as creator_name 
+      SELECT c.*, u.username as creator_name,
+      (
+        COALESCE((SELECT SUM(amount) FROM withdrawal_requests WHERE campaign_id = c.id AND executed = 1), 0) +
+        COALESCE((SELECT SUM(amount) FROM fund_usage_plans WHERE campaign_id = c.id AND withdrawal_status = 'withdrawn'), 0)
+      ) as total_withdrawn
       FROM campaigns c 
       JOIN users u ON c.creator_id = u.id 
       WHERE c.title NOT IN ('hp', 'mech', 'test')

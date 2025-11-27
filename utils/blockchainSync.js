@@ -257,7 +257,7 @@ const contractABI = [
   }
 ];
 
-const contractAddress = process.env.CONTRACT_ADDRESS || "0x9141bf2d3ab4e5bd44d89c83f3745902a7648fd7";
+const contractAddress = process.env.CONTRACT_ADDRESS || "0x1f11268B45D636C694e3e431Ab876E7874c27da7";
 const contract = new web3.eth.Contract(contractABI, contractAddress);
 
 // Database connection
@@ -267,7 +267,7 @@ const db = new sqlite3.Database('./crowdfunding.db');
 async function syncCampaignStatuses() {
   try {
     console.log('🔄 Syncing campaign statuses from blockchain...');
-    
+
     // Get all campaigns with blockchain_id from database
     const campaigns = await new Promise((resolve, reject) => {
       db.all(
@@ -288,23 +288,23 @@ async function syncCampaignStatuses() {
       try {
         // Get campaign details from blockchain
         const blockchainCampaign = await contract.methods.campaigns(campaign.blockchain_campaign_id).call();
-        
+
         if (blockchainCampaign.exists) {
           // Safely convert BigInt values to avoid mixing BigInt and other types
           const goalWei = typeof blockchainCampaign.goal === 'bigint' ? blockchainCampaign.goal.toString() : blockchainCampaign.goal;
           const pledgedWei = typeof blockchainCampaign.pledged === 'bigint' ? blockchainCampaign.pledged.toString() : blockchainCampaign.pledged;
           const deadlineTimestamp = typeof blockchainCampaign.deadline === 'bigint' ? Number(blockchainCampaign.deadline) : Number(blockchainCampaign.deadline);
-          
+
           // Convert values from wei to ETH
           const goal = web3.utils.fromWei(goalWei, 'ether');
           const pledged = web3.utils.fromWei(pledgedWei, 'ether');
           const deadline = new Date(deadlineTimestamp * 1000);
-          
+
           // Determine status based on blockchain data
           const now = Date.now();
           const deadlinePassed = deadlineTimestamp * 1000 < now;
           const goalMet = parseFloat(pledged) >= parseFloat(goal);
-          
+
           let status = 'active';
           if (blockchainCampaign.withdrawn) {
             status = 'completed';
@@ -316,7 +316,7 @@ async function syncCampaignStatuses() {
               status = 'failed'; // Goal not met, eligible for refunds
             }
           }
-          
+
           // Update database with blockchain data
           await new Promise((resolve, reject) => {
             db.run(
@@ -324,7 +324,7 @@ async function syncCampaignStatuses() {
                SET blockchain_goal = ?, current_amount = ?, deadline = ?, status = ?, is_withdrawn = ? 
                WHERE id = ?`,
               [goal, pledged, deadline.toISOString(), status, blockchainCampaign.withdrawn ? 1 : 0, campaign.id],
-              function(err) {
+              function (err) {
                 if (err) {
                   reject(err);
                 } else {
@@ -333,14 +333,14 @@ async function syncCampaignStatuses() {
               }
             );
           });
-          
+
           console.log(`✅ Synced Campaign #${campaign.id} (Blockchain ID: ${campaign.blockchain_campaign_id}) | Pledged: ${pledged} ETH | Status: ${status}`);
         }
       } catch (err) {
         console.error(`❌ Error syncing campaign #${campaign.id}:`, err.message);
       }
     }
-    
+
     console.log('✅ Campaign sync completed');
   } catch (err) {
     console.error('❌ Campaign sync error:', err);

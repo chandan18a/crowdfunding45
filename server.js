@@ -5,6 +5,8 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 require('dotenv').config({ path: './.env' });
+const session = require('express-session');
+const passport = require('./config/passport');
 const { checkEnvVariables } = require('./utils/envCheck');
 const WebSocketServer = require('./utils/websocket');
 
@@ -23,6 +25,21 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.static('static'));
 app.use('/uploads', express.static('uploads'));
+
+// Session middleware for OAuth
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'crowdfunding_super_secret_session_key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Initialize Passport
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Compatibility fallback: if a request comes to "/<filename>" (missing /uploads),
 // try to serve the file from the uploads directory. This covers legacy URLs like
@@ -434,6 +451,9 @@ initializeDatabase();
 // Define routes
 // Auth routes
 app.use('/api/auth', require('./routes/api/auth'));
+
+// Google OAuth routes
+app.use('/api/auth', require('./routes/api/googleAuth'));
 
 // Admin routes
 app.use('/api/admin', require('./routes/api/admin'));

@@ -1,0 +1,77 @@
+# Dependencies
+node_modules/
+client/node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+client/coverage
+
+# Production
+/build
+client/build
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+client/.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+crowdfunding.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Uploads (optional - uncomment if you don't want to track uploaded files)
+# uploads/*
+# !uploads/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Build files
+dist/
+*.tsbuildinfo
+
+# Package manager
+package-lock.json
+client/package-lock.json
+yarn.lock
+
+# Blockchain
+.secret
+truffle-config.js
+hardhat.config.js
+cache/
+artifacts/
+
+# Misc
+.antigravityignore

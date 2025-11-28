@@ -30,7 +30,7 @@ router.post(
   ],
   async (req, res) => {
     console.log('Registration request received:', req.body);
-    
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       console.log('Validation errors:', errors.array());
@@ -41,7 +41,7 @@ router.post(
 
     try {
       console.log('Processing registration for:', { username, email, role, name });
-      
+
       // Check admin secret for admin registration
       if (role === 'admin' && adminSecret !== process.env.ADMIN_SECRET) {
         console.log('Invalid admin secret provided');
@@ -58,9 +58,9 @@ router.post(
         async (err, user) => {
           if (err) {
             console.error('Database error checking existing user:', err.message);
-            return res.status(500).json({ 
-              error: 'Database error', 
-              details: err.message 
+            return res.status(500).json({
+              error: 'Database error',
+              details: err.message
             });
           }
 
@@ -93,9 +93,9 @@ router.post(
               function (err) {
                 if (err) {
                   console.error('Database error creating user:', err.message);
-                  return res.status(500).json({ 
-                    error: 'Database error creating user', 
-                    details: err.message 
+                  return res.status(500).json({
+                    error: 'Database error creating user',
+                    details: err.message
                   });
                 }
 
@@ -118,14 +118,14 @@ router.post(
                   (err, token) => {
                     if (err) {
                       console.error('JWT signing error:', err.message);
-                      return res.status(500).json({ 
-                        error: 'JWT signing error', 
-                        details: err.message 
+                      return res.status(500).json({
+                        error: 'JWT signing error',
+                        details: err.message
                       });
                     }
-                    
+
                     console.log('Registration successful, returning response');
-                    res.json({ 
+                    res.json({
                       token,
                       user: {
                         id: this.lastID,
@@ -142,18 +142,18 @@ router.post(
             );
           } catch (hashError) {
             console.error('Password hashing error:', hashError.message);
-            return res.status(500).json({ 
-              error: 'Password hashing error', 
-              details: hashError.message 
+            return res.status(500).json({
+              error: 'Password hashing error',
+              details: hashError.message
             });
           }
         }
       );
     } catch (err) {
       console.error('Registration error:', err.message);
-      res.status(500).json({ 
-        error: 'Registration error', 
-        details: err.message 
+      res.status(500).json({
+        error: 'Registration error',
+        details: err.message
       });
     }
   }
@@ -348,8 +348,8 @@ router.put(
           }
 
           if (existingUser) {
-            return res.status(400).json({ 
-              msg: existingUser.email === email ? 'Email already exists' : 'Username already exists' 
+            return res.status(400).json({
+              msg: existingUser.email === email ? 'Email already exists' : 'Username already exists'
             });
           }
 
@@ -385,7 +385,7 @@ router.put(
 router.put('/settings', auth, async (req, res) => {
   try {
     const settings = req.body;
-    
+
     // For now, we'll just return success since settings are stored locally
     // In a real application, you might want to store these in the database
     res.json({ msg: 'Settings saved successfully' });
@@ -472,7 +472,7 @@ router.post('/google', async (req, res) => {
 
   if (!process.env.GOOGLE_CLIENT_ID) {
     console.error('Google Client ID is not configured');
-    return res.status(500).json({ 
+    return res.status(500).json({
       msg: 'Google OAuth is not configured on the server. Please contact the administrator.',
       error: 'GOOGLE_CLIENT_ID not set'
     });
@@ -517,8 +517,8 @@ router.post('/google', async (req, res) => {
         } else {
           // User doesn't exist, create new account
           // Generate username from email or name
-          const baseUsername = name 
-            ? name.toLowerCase().replace(/\s+/g, '') 
+          const baseUsername = name
+            ? name.toLowerCase().replace(/\s+/g, '')
             : email.split('@')[0];
           let generatedUsername = baseUsername;
           let usernameExists = true;
@@ -562,9 +562,9 @@ router.post('/google', async (req, res) => {
             function (insertErr) {
               if (insertErr) {
                 console.error('Database error creating user:', insertErr.message);
-                return res.status(500).json({ 
-                  error: 'Database error creating user', 
-                  details: insertErr.message 
+                return res.status(500).json({
+                  error: 'Database error creating user',
+                  details: insertErr.message
                 });
               }
 
@@ -598,9 +598,9 @@ router.post('/google', async (req, res) => {
         (err, token) => {
           if (err) {
             console.error('JWT signing error:', err.message);
-            return res.status(500).json({ 
-              error: 'JWT signing error', 
-              details: err.message 
+            return res.status(500).json({
+              error: 'JWT signing error',
+              details: err.message
             });
           }
 
@@ -621,6 +621,39 @@ router.post('/google', async (req, res) => {
   } catch (error) {
     console.error('Google authentication error:', error.message);
     res.status(401).json({ msg: 'Invalid Google token', error: error.message });
+  }
+});
+
+// @route   POST api/auth/update-role
+// @desc    Update user role (for OAuth users)
+// @access  Private
+router.post('/update-role', auth, async (req, res) => {
+  const { role } = req.body;
+
+  if (!role || !['donor', 'fundraiser'].includes(role)) {
+    return res.status(400).json({ msg: 'Invalid role. Must be donor or fundraiser.' });
+  }
+
+  try {
+    db.run(
+      'UPDATE users SET role = ? WHERE id = ?',
+      [role, req.user.id],
+      function (err) {
+        if (err) {
+          console.error('Error updating role:', err.message);
+          return res.status(500).json({ msg: 'Server error' });
+        }
+
+        if (this.changes === 0) {
+          return res.status(404).json({ msg: 'User not found' });
+        }
+
+        res.json({ msg: 'Role updated successfully', role });
+      }
+    );
+  } catch (err) {
+    console.error('Update role error:', err.message);
+    res.status(500).send('Server error');
   }
 });
 

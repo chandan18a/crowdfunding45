@@ -263,8 +263,32 @@ const contract = new web3.eth.Contract(contractABI, contractAddress);
 // Database connection
 const db = new sqlite3.Database('./crowdfunding.db');
 
+// ⚡ OPTIMIZATION: Cache blockchain data to avoid repeated API calls
+let blockchainCache = {
+  campaigns: {},
+  lastSync: null,
+  isSyncing: false
+};
+
+const SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes (reduced from 1 minute)
+
 // Function to sync campaign statuses from blockchain
 async function syncCampaignStatuses() {
+  // ⚡ OPTIMIZATION: Skip if already syncing or synced recently
+  if (blockchainCache.isSyncing) {
+    console.log('⏭️ Sync already in progress, skipping...');
+    return;
+  }
+
+  if (blockchainCache.lastSync &&
+    Date.now() - blockchainCache.lastSync < SYNC_INTERVAL) {
+    console.log('⏭️ Using cached blockchain data (last sync: ' +
+      Math.round((Date.now() - blockchainCache.lastSync) / 1000) + 's ago)');
+    return;
+  }
+
+  blockchainCache.isSyncing = true;
+
   try {
     console.log('🔄 Syncing campaign statuses from blockchain...');
 
@@ -334,6 +358,15 @@ async function syncCampaignStatuses() {
             );
           });
 
+          // ⚡ OPTIMIZATION: Cache the result
+          blockchainCache.campaigns[campaign.id] = {
+            goal,
+            pledged,
+            status,
+            withdrawn: blockchainCampaign.withdrawn,
+            cachedAt: Date.now()
+          };
+
           console.log(`✅ Synced Campaign #${campaign.id} (Blockchain ID: ${campaign.blockchain_campaign_id}) | Pledged: ${pledged} ETH | Status: ${status}`);
         }
       } catch (err) {
@@ -341,14 +374,20 @@ async function syncCampaignStatuses() {
       }
     }
 
+    blockchainCache.lastSync = Date.now();
     console.log('✅ Campaign sync completed');
   } catch (err) {
     console.error('❌ Campaign sync error:', err);
+  } finally {
+    blockchainCache.isSyncing = false;
   }
 }
 
-// Run sync every minute
-setInterval(syncCampaignStatuses, 60 * 1000);
+// ⚡ OPTIMIZATION: Run sync every 5 minutes instead of every 1 minute
+setInterval(syncCampaignStatuses, SYNC_INTERVAL);
+
+// Initial sync on startup
+setTimeout(syncCampaignStatuses, 5000); // Wait 5 seconds after startup
 
 // Export for manual triggering
-module.exports = { syncCampaignStatuses };
+module.exports = { syncCampaignStatuses, blockchainCache };
